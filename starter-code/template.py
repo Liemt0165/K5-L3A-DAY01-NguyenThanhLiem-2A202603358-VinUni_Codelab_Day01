@@ -12,6 +12,10 @@ Instructions:
 import os
 import time
 from typing import Any, Callable
+from dotenv import load_dotenv
+
+# Tải cấu hình biến môi trường từ .env
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Estimated costs per 1M INPUT & OUTPUT tokens (USD) as of March 2026
@@ -67,7 +71,30 @@ def call_openai(
     """
     # TODO: Import OpenAI, instantiate client, call chat.completions.create with parameters,
     #       measure execution start/end time, extract text and token usage, and return them.
-    raise NotImplementedError("Implement call_openai")
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+    )
+
+    start_time = time.time()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+    )
+    latency = time.time() - start_time
+
+    response_text = response.choices[0].message.content or ""
+    usage = {
+        "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+        "output_tokens": response.usage.completion_tokens if response.usage else 0,
+    }
+
+    return response_text, latency, usage
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +142,38 @@ def call_gemini(
     """
     # TODO: Initialize Gemini client, set config parameters, call generate_content,
     #       measure latency, extract response text and usage metadata, and return the tuple.
-    raise NotImplementedError("Implement call_gemini")
+    from google import genai
+    from google.genai import types
+
+    base_url = os.getenv("GEMINI_BASE_URL")
+    http_options = types.HttpOptions(base_url=base_url) if base_url else None
+
+    client = genai.Client(
+        api_key=os.getenv("GEMINI_API_KEY"),
+        http_options=http_options,
+    )
+
+    config = types.GenerateContentConfig(
+        temperature=temperature,
+        top_p=top_p,
+        max_output_tokens=max_tokens,
+    )
+
+    start_time = time.time()
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config,
+    )
+    latency = time.time() - start_time
+
+    response_text = response.text or ""
+    usage = {
+        "input_tokens": response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
+        "output_tokens": response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
+    }
+
+    return response_text, latency, usage
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +210,39 @@ def call_anthropic(
     """
     # TODO: Initialize Anthropic client, create message, measure latency,
     #       extract content text and usage statistics, and return the tuple.
-    raise NotImplementedError("Implement call_anthropic")
+    import anthropic
+
+    base_url = os.getenv("ANTHROPIC_BASE_URL")
+    if base_url and base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+
+    client = anthropic.Anthropic(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        base_url=base_url,
+    )
+
+    extra_body = {}
+    if temperature is not None:
+        extra_body["temperature"] = temperature
+    if top_p is not None:
+        extra_body["top_p"] = top_p
+
+    start_time = time.time()
+    response = client.messages.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        extra_body=extra_body if extra_body else None,
+    )
+    latency = time.time() - start_time
+
+    response_text = response.content[0].text if response.content else ""
+    usage = {
+        "input_tokens": response.usage.input_tokens if response.usage else 0,
+        "output_tokens": response.usage.output_tokens if response.usage else 0,
+    }
+
+    return response_text, latency, usage
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +291,45 @@ def streaming_chatbot() -> None:
         - Keep history limited to the last 3 turns to optimize context window and costs.
     """
     # TODO: Setup interactive session, prompt user for input, stream response, and update history.
-    raise NotImplementedError("Implement streaming_chatbot")
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL"),
+    )
+
+    history: list[dict[str, str]] = []
+
+    while True:
+        try:
+            user_input = input("User: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ["quit", "exit"]:
+            break
+
+        history.append({"role": "user", "content": user_input})
+        active_messages = history[-6:]
+
+        assistant_reply = ""
+        try:
+            stream = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=active_messages,
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    delta = chunk.choices[0].delta.content
+                    print(delta, end="", flush=True)
+                    assistant_reply += delta
+            print()
+            history.append({"role": "assistant", "content": assistant_reply})
+        except Exception as e:
+            print(f"Error: {e}")
 
 
 # ---------------------------------------------------------------------------
